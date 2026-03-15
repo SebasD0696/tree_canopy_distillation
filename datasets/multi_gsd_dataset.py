@@ -30,12 +30,16 @@ class MultiGSDDataset(Dataset):
         sample = self.samples[idx]
         image = Image.open(sample["img"]).convert("RGB")
         mask = Image.open(sample["mask"])
-
+    
         if self.transform:
             image = self.transform(image)
-            # Para la máscara podemos usar ToTensor y convertir a long
-            mask = torch.as_tensor(np.array(mask), dtype=torch.long)
-
+        
+        # Convertir máscara a tensor
+        mask = torch.as_tensor(np.array(mask), dtype=torch.long)
+    
+        #  Normalizar máscara para que los valores estén en [0, num_classes-1]
+        mask = (mask > 0).long()  # todos los valores >0 pasan a 1
+    
         return {
             "image": image,
             "mask": mask,
