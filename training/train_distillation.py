@@ -190,16 +190,22 @@ def train(args):
 
         avg_loss = total_loss / len(loader)
 
-        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.4f}")
-
-        ckpt = os.path.join(
-            args.checkpoint_dir,
-            f"student_epoch_{epoch+1}.pth"
+        print(
+            f"Epoch {epoch+1}/{args.epochs}, "
+            f"loss_mae: {loss_mae.item():.4f}, "
+            f"loss_teacher: {loss_teacher.item():.4f}, "
+            f"loss_supervision: {loss_supervision.item():.4f}, "
+            f"total_loss: {avg_loss:.4f}"
         )
 
-        torch.save(student.state_dict(), ckpt)
 
-        print("Checkpoint guardado:", ckpt)
+        if (epoch + 1) % 5 == 0 or (epoch + 1) == args.epochs:  # cada 5 epochs + el último
+            ckpt = os.path.join(
+                args.checkpoint_dir,
+                f"student_epoch_{epoch+1}.pth"
+            )
+            torch.save(student.state_dict(), ckpt)
+            print("Checkpoint guardado:", ckpt)
 
 
 # ==========================
