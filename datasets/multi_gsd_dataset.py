@@ -32,13 +32,12 @@ class MultiGSDDataset(Dataset):
         mask = Image.open(sample["mask"])
     
         # Transform imagen
-        image = self.transform(image)
-    
-        # Resize y normalización de máscara
-        mask = mask.resize((512, 512))
+        image = image.resize((512, 512))  #  resize de la imagen
+        image = transforms.ToTensor()(image)
+        
+        mask = mask.resize((512, 512))  # resize de la máscara
         mask = torch.as_tensor(np.array(mask), dtype=torch.long)
         mask = (mask > 0).long()
-    
         return {
             "image": image,
             "mask": mask,
