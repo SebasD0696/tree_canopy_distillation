@@ -10,7 +10,7 @@ class SegFormerStudent(nn.Module):
         - Teacher SegFormer B5 (segmentación)
         - Teacher MAE (features multi-resolution)
     """
-    def __init__(self, model_name="nvidia/segformer-b0-finetuned-ade-512-512", num_classes=2):
+    def __init__(self, model_name="restor/tcd-segformer-mit-b0", num_classes=2):
         super().__init__()
         
         # Modelo SegFormer Student
