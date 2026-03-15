@@ -11,8 +11,7 @@ from torch.cuda.amp import autocast, GradScaler
 
 from models.teacher_segformer import TeacherSegFormer
 from models.teacher_mae import MAETeacher
-from models.student_segformer import StudentSegFormer
-
+from models.student_segformer import SegFormerStudent
 
 # ==========================
 # DATASET
@@ -93,7 +92,7 @@ def train(args):
 
     print("Loading student...")
 
-    student = StudentSegFormer(
+    student = SegFormerStudent(
         num_classes=num_classes
     ).to(device)
 
