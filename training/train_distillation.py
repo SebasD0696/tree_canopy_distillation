@@ -49,7 +49,8 @@ class CanopyDataset(Dataset):
         with rasterio.open(mask_path) as src:
             mask = src.read(1)
 
-        mask = torch.from_numpy(mask).long()
+        mask = torch.from_numpy(mask)
+        mask = (mask > 0).long()
 
         return {
             "image": img,
