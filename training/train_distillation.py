@@ -8,7 +8,7 @@ from torchvision import transforms as T
 
 from models.teacher_segformer import TeacherSegFormer
 from models.teacher_mae import MAETeacher
-from models.student_segformer import StudentSegFormer
+from models.student_segformer import SegFormerStudent
 from models.mae_encoder import build_mae_encoder
 
 # -------------------------------
@@ -30,7 +30,7 @@ os.makedirs(checkpoint_dir, exist_ok=True)
 teacher_segformer = TeacherSegFormer("models/teacher_segformer", num_classes).to(device)
 teacher_mae = MAETeacher(build_mae_encoder(), "cross_scale_mae_large_pretrain.pth", num_classes).to(device)
 
-student = StudentSegFormer("restor/tcd-segformer-mit-b0", num_classes).to(device)
+student = SegFormerStudent("restor/tcd-segformer-mit-b0", num_classes).to(device)
 
 teacher_segformer.eval()
 teacher_mae.eval()
