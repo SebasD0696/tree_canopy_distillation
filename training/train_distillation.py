@@ -24,16 +24,11 @@ class CanopyDataset(Dataset):
         self.image_dir = os.path.join(root, "images")
         self.mask_dir = os.path.join(root, "masks")
 
-        self.images = []
+        self.images = sorted(os.listdir(self.image_dir))
 
-        for img in sorted(os.listdir(self.image_dir)):
-
-            mask_path = os.path.join(self.mask_dir, img)
-
-            if os.path.exists(mask_path):
-                self.images.append(img)
-
-        self.transform = T.ToTensor()
+        self.transform = T.Compose([
+            T.ToTensor()
+        ])
     
     def __len__(self):
         return len(self.images)
