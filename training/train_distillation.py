@@ -1,111 +1,211 @@
-# training/train_distillation.py
 import os
+import argparse
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-import rasterio
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms as T
+import rasterio
+import numpy as np
+
+from torch.cuda.amp import autocast, GradScaler
 
 from models.teacher_segformer import TeacherSegFormer
 from models.teacher_mae import MAETeacher
-from models.student_segformer import SegFormerStudent
-from models.mae_encoder import build_mae_encoder
+from models.student_segformer import StudentSegFormer
 
-# -------------------------------
-# Configuración
-# -------------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-num_classes = 2
-batch_size = 2
-lr = 1e-4
-num_epochs = 10
-alpha = 0.5  # peso MAE teacher
-beta = 0.5   # peso SegFormer teacher
-checkpoint_dir = "outputs/checkpoints"
-os.makedirs(checkpoint_dir, exist_ok=True)
 
-# -------------------------------
-# 1️⃣ Inicializar modelos
-# -------------------------------
-teacher_segformer = TeacherSegFormer(segformer_path, num_classes).to(device)
-teacher_mae = MAETeacher(build_mae_encoder(), "cross_scale_mae_large_pretrain.pth", num_classes).to(device)
+# ==========================
+# DATASET
+# ==========================
 
-student = SegFormerStudent("restor/tcd-segformer-mit-b0", num_classes).to(device)
+class CanopyDataset(Dataset):
 
-teacher_segformer.eval()
-teacher_mae.eval()
-for p in teacher_segformer.parameters():
-    p.requires_grad = False
-for p in teacher_mae.parameters():
-    p.requires_grad = False
+    def __init__(self, root):
 
-optimizer = torch.optim.Adam(student.parameters(), lr=lr)
+        self.image_dir = os.path.join(root, "images")
+        self.mask_dir = os.path.join(root, "masks")
 
-# -------------------------------
-# 2️⃣ Dataset para tree canopy
-# -------------------------------
-class TreeCanopyDataset(Dataset):
-    def __init__(self, images_dir, masks_dir, transform=None):
-        self.images_files = sorted([os.path.join(images_dir, f) for f in os.listdir(images_dir)])
-        self.masks_files = sorted([os.path.join(masks_dir, f) for f in os.listdir(masks_dir)])
-        self.transform = transform
+        self.images = sorted(os.listdir(self.image_dir))
+
+        self.transform = T.Compose([
+            T.ToTensor()
+        ])
 
     def __len__(self):
-        return len(self.images_files)
+        return len(self.images)
 
     def __getitem__(self, idx):
-        # Leer imagen RGB
-        with rasterio.open(self.images_files[idx]) as src:
-            img = src.read([1, 2, 3]).astype("float32") / 255.0
-            img = torch.from_numpy(img)
-        
-        # Leer máscara
-        with rasterio.open(self.masks_files[idx]) as src:
-            mask = src.read(1).astype("int64")
-            mask = torch.from_numpy(mask)
 
-        if self.transform:
-            img = self.transform(img)
+        img_name = self.images[idx]
 
-        return {"image": img, "mask": mask}
+        img_path = os.path.join(self.image_dir, img_name)
+        mask_path = os.path.join(self.mask_dir, img_name)
 
-dataset = TreeCanopyDataset(images_dir="data/images", masks_dir="data/masks", transform=None)
-loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        with rasterio.open(img_path) as src:
+            img = src.read([1,2,3])
 
-# -------------------------------
-# 3️⃣ Entrenamiento con distillation
-# -------------------------------
-for epoch in range(num_epochs):
-    student.train()
-    total_loss = 0
-    for batch in loader:
-        images = batch["image"].to(device)
-        masks = batch["mask"].to(device)
+        img = np.transpose(img, (1,2,0))
+        img = self.transform(img)
 
-        with torch.no_grad():
-            segformer_teacher_logits = teacher_segformer(images)
-            mae_teacher_logits = teacher_mae(images)
+        with rasterio.open(mask_path) as src:
+            mask = src.read(1)
 
-        # Forward student
-        student_logits = student(images)
+        mask = torch.from_numpy(mask).long()
 
-        # Distillation losses
-        loss_teacher = F.mse_loss(student_logits, segformer_teacher_logits)
-        loss_mae = F.mse_loss(student_logits, mae_teacher_logits)
-        loss_supervision = F.cross_entropy(student_logits, masks)
+        return {
+            "image": img,
+            "mask": mask
+        }
 
-        loss = alpha * loss_mae + beta * loss_teacher + loss_supervision
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+# ==========================
+# TRAINING
+# ==========================
 
-        total_loss += loss.item()
+def train(args):
 
-    avg_loss = total_loss / len(loader)
-    print(f"Epoch {epoch+1}/{num_epochs}, Avg Loss: {avg_loss:.4f}")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Guardar checkpoint
-    ckpt_path = os.path.join(checkpoint_dir, f"student_epoch_{epoch+1}.pth")
-    torch.save(student.state_dict(), ckpt_path)
-    print(f"Checkpoint guardado: {ckpt_path}")
+    print("Device:", device)
+
+    dataset = CanopyDataset(args.data_path)
+
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=2,
+        pin_memory=True
+    )
+
+    num_classes = args.num_classes
+
+    print("Loading teachers...")
+
+    teacher_segformer = TeacherSegFormer(
+        args.segformer_path,
+        num_classes
+    ).to(device)
+
+    teacher_mae = MAETeacher(
+        args.mae_weights
+    ).to(device)
+
+    print("Loading student...")
+
+    student = StudentSegFormer(
+        num_classes=num_classes
+    ).to(device)
+
+    optimizer = torch.optim.AdamW(
+        student.parameters(),
+        lr=args.lr
+    )
+
+    scaler = GradScaler()
+
+    alpha = args.alpha
+    beta = args.beta
+
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+
+    for epoch in range(args.epochs):
+
+        student.train()
+
+        total_loss = 0
+
+        for batch in loader:
+
+            images = batch["image"].to(device)
+            masks = batch["mask"].to(device)
+
+            optimizer.zero_grad()
+
+            # Teachers (no gradients)
+            with torch.no_grad():
+                with autocast():
+
+                    segformer_teacher_logits = teacher_segformer(images)
+                    mae_teacher_logits = teacher_mae(images)
+
+                    mae_teacher_logits = F.interpolate(
+                        mae_teacher_logits,
+                        size=segformer_teacher_logits.shape[-2:],
+                        mode="bilinear",
+                        align_corners=False
+                    )
+
+            # Student
+            with autocast():
+
+                student_logits = student(images)
+
+                loss_teacher = F.mse_loss(
+                    student_logits,
+                    segformer_teacher_logits
+                )
+
+                loss_mae = F.mse_loss(
+                    student_logits,
+                    mae_teacher_logits
+                )
+
+                loss_supervision = F.cross_entropy(
+                    student_logits,
+                    masks
+                )
+
+                loss = alpha * loss_mae + beta * loss_teacher + loss_supervision
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(loader)
+
+        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.4f}")
+
+        ckpt = os.path.join(
+            args.checkpoint_dir,
+            f"student_epoch_{epoch+1}.pth"
+        )
+
+        torch.save(student.state_dict(), ckpt)
+
+        print("Checkpoint guardado:", ckpt)
+
+
+# ==========================
+# MAIN
+# ==========================
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--data_path", type=str, required=True)
+
+    parser.add_argument("--mae_weights", type=str, required=True)
+
+    parser.add_argument("--segformer_path", type=str, required=True)
+
+    parser.add_argument("--epochs", type=int, default=10)
+
+    parser.add_argument("--batch_size", type=int, default=1)
+
+    parser.add_argument("--lr", type=float, default=1e-4)
+
+    parser.add_argument("--num_classes", type=int, default=2)
+
+    parser.add_argument("--alpha", type=float, default=0.5)
+
+    parser.add_argument("--beta", type=float, default=0.5)
+
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
+
+    args = parser.parse_args()
+
+    train(args)
