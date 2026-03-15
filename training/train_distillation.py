@@ -137,24 +137,48 @@ def train(args):
 
             # Student
             with autocast():
-
+            
                 student_logits = student(images)
-
+            
+                # Upsample student → tamaño máscara
+                student_logits = F.interpolate(
+                    student_logits,
+                    size=masks.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False
+                )
+            
+                # Upsample teacher segformer
+                segformer_teacher_logits = F.interpolate(
+                    segformer_teacher_logits,
+                    size=masks.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False
+                )
+            
+                # Upsample teacher MAE
+                mae_teacher_logits = F.interpolate(
+                    mae_teacher_logits,
+                    size=masks.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False
+                )
+            
                 loss_teacher = F.mse_loss(
                     student_logits,
                     segformer_teacher_logits
                 )
-
+            
                 loss_mae = F.mse_loss(
                     student_logits,
                     mae_teacher_logits
                 )
-
+            
                 loss_supervision = F.cross_entropy(
                     student_logits,
                     masks
                 )
-
+            
                 loss = alpha * loss_mae + beta * loss_teacher + loss_supervision
 
             scaler.scale(loss).backward()
