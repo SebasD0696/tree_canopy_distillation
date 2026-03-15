@@ -12,7 +12,12 @@ class MAETeacher(nn.Module):
         # Construir encoder MAE automáticamente
         self.encoder = build_mae_encoder()
 
-        checkpoint = torch.load(weights_path, map_location='cpu')
+        checkpoint = torch.load(
+            weights_path,
+            map_location='cpu',
+            weights_only=False
+        )
+        
         state_dict = checkpoint['model']
 
         # Interpolación de pos_embed si cambia el tamaño
