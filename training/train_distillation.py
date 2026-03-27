@@ -52,12 +52,17 @@ class MultiGSDDataset(Dataset):
         return img
 
     def _load_mask(self, gsd, filename):
-
+    
         path = os.path.join(self.root_dir,"masks",gsd,filename)
         mask = Image.open(path).convert("L")
         mask = mask.resize((self.img_size,self.img_size),Image.NEAREST)
-
-        return torch.from_numpy(np.array(mask)).long()
+    
+        mask = np.array(mask)
+    
+        # convertir máscara a clases 0 y 1
+        mask = (mask > 0).astype(np.int64)
+    
+        return torch.from_numpy(mask).long()
 
     def __getitem__(self,idx):
 
