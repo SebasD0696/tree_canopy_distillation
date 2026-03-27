@@ -163,7 +163,7 @@ def train(args):
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=8,
+        num_workers=4,
         pin_memory=True,
         persistent_workers=True
     )
@@ -205,9 +205,6 @@ def train(args):
     student = SegFormerStudent(num_classes=num_classes).to(device)
 
     fusion = MultiScaleFusion(num_classes=num_classes).to(device)
-
-    student = torch.compile(student)
-    fusion = torch.compile(fusion)
 
 
     optimizer = torch.optim.AdamW(
