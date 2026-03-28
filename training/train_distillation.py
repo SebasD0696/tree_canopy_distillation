@@ -117,56 +117,60 @@ def train(args):
     best_loss = float("inf")
 
     # ======================
-    # TRAIN LOOP
+    # TRAIN LOOP CORREGIDO
     # ======================
     for epoch in range(args.epochs):
         student.train()
         total_loss = 0
+    
         for batch in train_loader:
             images = batch["image"].to(device)
             masks = batch["mask"].to(device)
-            mask_size = masks.shape[-2:]
-
+            mask_size = masks.shape[-2:]  # tamaño de máscara: [H,W]
+    
             optimizer.zero_grad()
-
+    
             # ======================
-            # TEACHER FEATURES MULTI-SCALE
+            # TEACHER FEATURES
             # ======================
             with torch.no_grad():
                 # Teacher logits
                 teacher_logits = teacher_segformer(images)
-                teacher_logits = F.interpolate(teacher_logits, size=mask_size)
-
-                # MAE features multi-layer (simula multi-scale)
+                teacher_logits = F.interpolate(teacher_logits, size=mask_size, mode="bilinear", align_corners=False)
+    
+                # MAE features (simula multi-scale)
                 mae_feats = teacher_mae(images)
-                mae_feats = F.interpolate(mae_feats, size=mask_size)
-
+                mae_feats = F.interpolate(mae_feats, size=mask_size, mode="bilinear", align_corners=False)
+    
             # ======================
             # STUDENT
             # ======================
             with autocast():
                 student_logits = student(images)
-
-                # Loss: cross-entropy supervisada
-                loss_sup = F.cross_entropy(student_logits, masks)
-
-                # Distillation de logits
-                loss_kl = kl_loss(student_logits, teacher_logits, args.temperature)
-
-                # Distillation de features MAE
-                loss_mae = F.mse_loss(student_logits, mae_feats)
-
+                # Interpolamos student a resolución de mask
+                student_logits_resized = F.interpolate(student_logits, size=mask_size, mode="bilinear", align_corners=False)
+    
+                # Loss supervisada
+                loss_sup = F.cross_entropy(student_logits_resized, masks)
+    
+                # Distillation KL con teacher
+                loss_kl = kl_loss(student_logits_resized, teacher_logits, args.temperature)
+    
+                # Distillation MAE
+                loss_mae = F.mse_loss(student_logits_resized, mae_feats)
+    
                 # Loss total
                 loss = args.alpha * loss_mae + args.beta * loss_kl + loss_sup
-
+    
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+    
             total_loss += loss.item()
-
+    
         scheduler.step()
         train_loss = total_loss / len(train_loader)
-
+    
         # ======================
         # VALIDATION
         # ======================
@@ -177,15 +181,16 @@ def train(args):
                 images = batch["image"].to(device)
                 masks = batch["mask"].to(device)
                 mask_size = masks.shape[-2:]
-
+    
                 pred = student(images)
-                loss = F.cross_entropy(pred, masks)
+                pred_resized = F.interpolate(pred, size=mask_size, mode="bilinear", align_corners=False)
+    
+                loss = F.cross_entropy(pred_resized, masks)
                 val_loss += loss.item()
         val_loss /= len(val_loader)
-
+    
         print(f"Epoch {epoch+1}/{args.epochs} TrainLoss {train_loss:.4f} ValLoss {val_loss:.4f}")
-
-        # Guardar mejor modelo
+    
         if val_loss < best_loss:
             best_loss = val_loss
             torch.save({
@@ -193,7 +198,6 @@ def train(args):
                 "epoch": epoch
             }, os.path.join(args.checkpoint_dir, "student_best.pth"))
             print("Best model saved")
-
 
 # ==========================
 # MAIN
